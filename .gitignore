@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.coverage
+
+# 認証情報・ローカル状態（絶対にコミットしない）
+credentials.json
+client_secret*.json
+token.json
+config.yaml
+state.json
+.env
