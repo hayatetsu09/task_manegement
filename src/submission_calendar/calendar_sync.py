@@ -15,11 +15,42 @@ from .config import Config
 from .dates import parse_time_string
 from .models import Submission
 
-__all__ = ["CalendarSync", "SyncResult", "EXT_SOURCE_KEY", "EXT_FP_KEY"]
+__all__ = ["CalendarSync", "SyncResult", "build_description", "marker_for",
+           "EXT_SOURCE_KEY", "EXT_FP_KEY"]
 
 # 予定に埋め込む目印（Google カレンダーの private extended property）
 EXT_SOURCE_KEY = "subcal_source"
 EXT_FP_KEY = "subcal_fp"
+
+# 予定の説明文に埋め込む目印。カレンダーを検索して重複を防ぐために使う
+# （extendedProperties を読み書きできない経路——Claude の連携など——のための手段）。
+MARKER_PREFIX = "subcal"
+
+
+def marker_for(source_id: str) -> str:
+    return f"{MARKER_PREFIX}:{source_id}"
+
+
+def build_description(submission: Submission) -> str:
+    """予定の説明文。元メールへの導線と、重複防止の目印を含む。"""
+    message = submission.message
+    lines = [
+        f"件名: {message.subject}",
+        f"差出人: {message.sender}",
+        f"受信: {message.received_at:%Y-%m-%d %H:%M}",
+    ]
+    if submission.deadline and submission.deadline.text:
+        lines.append(f"メール中の締め切り表記: 「{submission.deadline.text}」")
+    if message.url:
+        lines.append(f"元のメール: {message.url}")
+    if submission.notes:
+        lines.append("")
+        lines.extend(f"※ {note}" for note in submission.notes)
+    lines.append("")
+    lines.append(f"[{marker_for(submission.source_id)}] submission-calendar が "
+                 f"{submission.extractor} で自動作成")
+    return "\n".join(lines)
+
 
 ACTION_LABELS = {
     "created": "作成",
@@ -92,30 +123,12 @@ class CalendarSync:
             {"dateTime": end.isoformat(), "timeZone": self.config.timezone},
         )
 
-    def _description(self, submission: Submission) -> str:
-        message = submission.message
-        lines = [
-            f"件名: {message.subject}",
-            f"差出人: {message.sender}",
-            f"受信: {message.received_at:%Y-%m-%d %H:%M}",
-        ]
-        if submission.deadline and submission.deadline.text:
-            lines.append(f"メール中の締め切り表記: 「{submission.deadline.text}」")
-        if message.url:
-            lines.append(f"元のメール: {message.url}")
-        if submission.notes:
-            lines.append("")
-            lines.extend(f"※ {note}" for note in submission.notes)
-        lines.append("")
-        lines.append(f"(submission-calendar が {submission.extractor} で自動作成)")
-        return "\n".join(lines)
-
     def build_event(self, submission: Submission) -> dict:
         start, end = self._times(submission)
         calendar_config = self.config.calendar
         event: dict = {
             "summary": f"{calendar_config.event_prefix}{submission.title}",
-            "description": self._description(submission),
+            "description": build_description(submission),
             "start": start,
             "end": end,
             "extendedProperties": {

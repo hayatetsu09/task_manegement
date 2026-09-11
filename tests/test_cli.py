@@ -3,7 +3,7 @@
 from datetime import datetime
 
 import pytest
-from fakes import FakeCalendarService, FakeGmailService, raw_message
+from fakes import FakeCalendarService, FakeGmailService, FakeImapSource, raw_message
 
 from submission_calendar import cli
 
@@ -35,7 +35,7 @@ MAILS = [
 def env(tmp_path, monkeypatch):
     gmail = FakeGmailService(list(MAILS))
     calendar = FakeCalendarService()
-    monkeypatch.setattr(cli, "_connect", lambda config: (gmail, calendar))
+    monkeypatch.setattr(cli, "_connect", lambda config, **kwargs: (gmail, calendar))
 
     config_path = tmp_path / "config.yaml"
     config_path.write_text(
@@ -149,3 +149,58 @@ def test_config_error_exits_with_code_2(tmp_path, capsys):
     path.write_text("calender: {}\n", encoding="utf-8")
     assert cli.main(["sync", "-c", str(path)]) == 2
     assert "設定エラー" in capsys.readouterr().err
+
+
+# --- IMAP（Outlook / 大学メール）経由 -----------------------------------
+@pytest.fixture
+def imap_env(env, monkeypatch, tmp_path):
+    imap_source = FakeImapSource(
+        [
+            (
+                "【教務課】履修登録確認票の提出について",
+                "確認票は10月5日(月) 17:00までに教務課へ提出してください。",
+            ),
+            ("学内ネットワーク停止のお知らせ", "10月1日に停止します。"),
+        ]
+    )
+    monkeypatch.setattr(cli, "_build_imap_source", lambda config: imap_source)
+    config_path = tmp_path / "imap.yaml"
+    config_path.write_text(
+        f"state_file: {tmp_path / 'imap-state.json'}\n"
+        "imap:\n  enabled: true\n  username: student@example.ac.jp\n",
+        encoding="utf-8",
+    )
+    env["imap_args"] = ["-c", str(config_path)]
+    env["imap_source"] = imap_source
+    return env
+
+
+def test_imap_mail_is_registered(imap_env, capsys):
+    assert cli.main(["sync", *imap_env["imap_args"]]) == 0
+    summaries = [event["summary"] for event in events(imap_env).store.values()]
+    assert "[提出] 【教務課】履修登録確認票の提出について" in summaries
+
+
+def test_imap_and_gmail_can_run_together(imap_env):
+    assert cli.main(["sync", "--source", "all", *imap_env["imap_args"]]) == 0
+    assert len(events(imap_env).store) == 2  # Gmail から 1 件、IMAP から 1 件
+
+
+def test_imap_only_does_not_need_gmail_access(imap_env, monkeypatch):
+    """IMAP だけの構成では Gmail のスコープを要求しない。"""
+    captured = {}
+
+    def fake_connect(config, *, need_calendar):
+        captured["need_gmail"] = config.gmail.enabled
+        return None, imap_env["calendar"]
+
+    monkeypatch.setattr(cli, "_connect", fake_connect)
+    assert cli.main(["sync", "--source", "imap", *imap_env["imap_args"]]) == 0
+    assert captured["need_gmail"] is False
+
+
+def test_imap_messages_are_not_labelled(imap_env):
+    """ラベル付けは Gmail のメールにだけ行う。"""
+    cli.main(["sync", "--source", "all", *imap_env["imap_args"]])
+    labelled = [message_id for message_id, _ in imap_env["gmail"].messages().modified]
+    assert all(not message_id.startswith("imap") for message_id in labelled)

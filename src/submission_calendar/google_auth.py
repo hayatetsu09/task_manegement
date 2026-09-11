@@ -19,10 +19,19 @@ class MissingDependency(RuntimeError):
     pass
 
 
-def scopes_for(*, need_label: bool = False) -> list[str]:
-    """必要最小限のスコープを返す。ラベルを付けるときだけ gmail.modify が要る。"""
-    gmail_scope = SCOPE_GMAIL_MODIFY if need_label else SCOPE_GMAIL_READONLY
-    return [gmail_scope, SCOPE_CALENDAR]
+def scopes_for(*, need_gmail: bool = True, need_calendar: bool = True,
+               need_label: bool = False) -> list[str]:
+    """必要最小限のスコープを返す。
+
+    Gmail を使わない（IMAP だけの）構成ではメールへのアクセス権を要求しない。
+    ラベルを付けるときだけ読み取りではなく gmail.modify が要る。
+    """
+    scopes = []
+    if need_gmail:
+        scopes.append(SCOPE_GMAIL_MODIFY if need_label else SCOPE_GMAIL_READONLY)
+    if need_calendar:
+        scopes.append(SCOPE_CALENDAR)
+    return scopes
 
 
 def _imports():
@@ -80,9 +89,10 @@ def get_credentials(
     return creds
 
 
-def build_services(creds) -> tuple[object, object]:
-    """(gmail, calendar) のサービスオブジェクトを作る。"""
+def build_services(creds, *, gmail: bool = True, calendar: bool = True) -> tuple:
+    """(gmail, calendar) のサービスオブジェクトを作る。不要な方は None。"""
     _, _, _, build = _imports()
-    gmail = build("gmail", "v1", credentials=creds, cache_discovery=False)
-    calendar = build("calendar", "v3", credentials=creds, cache_discovery=False)
-    return gmail, calendar
+    return (
+        build("gmail", "v1", credentials=creds, cache_discovery=False) if gmail else None,
+        build("calendar", "v3", credentials=creds, cache_discovery=False) if calendar else None,
+    )

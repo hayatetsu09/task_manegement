@@ -16,6 +16,7 @@ token_file: ~/.config/submission-calendar/token.json
 state_file: ~/.config/submission-calendar/state.json
 
 gmail:
+  enabled: true
   # Gmail の検索クエリ。ラベルや差出人で絞り込むと精度が上がります
   #   例) newer_than:60d (label:大学 OR from:example.ac.jp)
   query: "newer_than:60d -category:promotions -category:social"
@@ -24,6 +25,20 @@ gmail:
   max_results: 50
   # 処理済みメールに付けるラベル（空なら付けない。gmail.modify 権限が必要）
   label_processed: ""
+
+# Outlook / Microsoft 365 や大学のメールサーバから IMAP で取り込む場合
+imap:
+  enabled: false
+  host: outlook.office365.com   # 大学のサーバなら imap.example.ac.jp など
+  port: 993
+  use_ssl: true
+  username: ""                  # 大学のメールアドレス
+  # パスワードは設定ファイルに書かず、この環境変数から読みます
+  #   export SUBCAL_IMAP_PASSWORD='...'
+  password_env: SUBCAL_IMAP_PASSWORD
+  mailbox: INBOX
+  days: 60
+  max_results: 50
 
 calendar:
   # 書き込み先。専用カレンダーを作ってその ID を入れるのがおすすめ

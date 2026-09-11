@@ -11,9 +11,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-import yaml
+try:
+    import yaml
+except ImportError:  # YAML 設定を使わない場合は無くても動く
+    yaml = None
 
-__all__ = ["Config", "ConfigError", "DEFAULT_CONFIG_PATHS"]
+__all__ = ["Config", "ConfigError", "DEFAULT_CONFIG_PATHS", "GmailConfig", "ImapConfig",
+           "CalendarConfig", "DetectionConfig", "LLMConfig", "EXAMPLE_CONFIG"]
 
 DEFAULT_CONFIG_PATHS = (
     Path("config.yaml"),
@@ -39,6 +43,8 @@ class ConfigError(Exception):
 
 @dataclass
 class GmailConfig:
+    # Gmail から取り込むか
+    enabled: bool = True
     # Gmail の検索クエリ。https://support.google.com/mail/answer/7190 の記法が使える
     query: str = "newer_than:60d -category:promotions -category:social"
     # query に提出依頼らしいキーワード群（OR 条件）を自動で足すか
@@ -46,6 +52,24 @@ class GmailConfig:
     max_results: int = 50
     # 処理済みメールに付けるラベル名（空なら付けない。gmail.modify 権限が要る）
     label_processed: str = ""
+
+
+@dataclass
+class ImapConfig:
+    """IMAP での取り込み設定。Outlook / Microsoft 365 や大学のメールサーバ向け。"""
+
+    enabled: bool = False
+    # Outlook / Microsoft 365 は outlook.office365.com
+    host: str = "outlook.office365.com"
+    port: int = 993
+    use_ssl: bool = True
+    username: str = ""
+    # パスワードは設定ファイルに書かず、この名前の環境変数から読む
+    password_env: str = "SUBCAL_IMAP_PASSWORD"
+    mailbox: str = "INBOX"
+    # 直近何日分を対象にするか
+    days: int = 60
+    max_results: int = 50
 
 
 @dataclass
@@ -94,6 +118,7 @@ class Config:
     token_file: str = "~/.config/submission-calendar/token.json"
     state_file: str = "~/.config/submission-calendar/state.json"
     gmail: GmailConfig = field(default_factory=GmailConfig)
+    imap: ImapConfig = field(default_factory=ImapConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -152,8 +177,16 @@ class Config:
         if self.calendar.duration_minutes < 0:
             raise ConfigError("calendar.duration_minutes は 0 以上にしてください")
 
+        if self.imap.enabled and not (self.imap.host and self.imap.username):
+            raise ConfigError("imap を使うには imap.host と imap.username が必要です")
+
+        if not self.gmail.enabled and not self.imap.enabled:
+            raise ConfigError("取り込み元がありません（gmail.enabled か imap.enabled を true に）")
+
 
 def _read_yaml(path: Path) -> dict[str, Any]:
+    if yaml is None:
+        raise ConfigError("設定ファイルの読み込みには PyYAML が必要です: pip install PyYAML")
     try:
         data = yaml.safe_load(path.read_text(encoding="utf-8"))
     except yaml.YAMLError as exc:
@@ -209,6 +242,7 @@ token_file: ~/.config/submission-calendar/token.json
 state_file: ~/.config/submission-calendar/state.json
 
 gmail:
+  enabled: true
   # Gmail の検索クエリ。ラベルや差出人で絞り込むと精度が上がります
   #   例) newer_than:60d (label:大学 OR from:example.ac.jp)
   query: "newer_than:60d -category:promotions -category:social"
@@ -217,6 +251,20 @@ gmail:
   max_results: 50
   # 処理済みメールに付けるラベル（空なら付けない。gmail.modify 権限が必要）
   label_processed: ""
+
+# Outlook / Microsoft 365 や大学のメールサーバから IMAP で取り込む場合
+imap:
+  enabled: false
+  host: outlook.office365.com   # 大学のサーバなら imap.example.ac.jp など
+  port: 993
+  use_ssl: true
+  username: ""                  # 大学のメールアドレス
+  # パスワードは設定ファイルに書かず、この環境変数から読みます
+  #   export SUBCAL_IMAP_PASSWORD='...'
+  password_env: SUBCAL_IMAP_PASSWORD
+  mailbox: INBOX
+  days: 60
+  max_results: 50
 
 calendar:
   # 書き込み先。専用カレンダーを作ってその ID を入れるのがおすすめ

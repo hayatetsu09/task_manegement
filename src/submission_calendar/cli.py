@@ -9,10 +9,14 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import json
 import logging
+import os
 import sys
 from datetime import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from . import __version__
 from .calendar_sync import CalendarSync, SyncResult
@@ -20,7 +24,9 @@ from .config import Config, ConfigError, EXAMPLE_CONFIG
 from .extract import build_extractor
 from .google_auth import build_services, get_credentials, scopes_for
 from .models import Submission
+from .serialize import message_from_dict, submission_to_dict
 from .sources.gmail import GmailSource, build_query
+from .sources.imap import ImapSource
 from .state import State
 
 _MIDNIGHT = time(0, 0)
@@ -45,6 +51,11 @@ def _add_search_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--since", type=int, metavar="DAYS", help="直近 N 日のメールだけを対象にする")
     parser.add_argument(
         "--extractor", choices=("rules", "llm", "auto"), help="抽出方法（設定を上書き）"
+    )
+    parser.add_argument(
+        "--source",
+        choices=("gmail", "imap", "all"),
+        help="取り込み元（gmail / imap=Outlook など / all）",
     )
 
 
@@ -71,6 +82,24 @@ def build_parser() -> argparse.ArgumentParser:
     sync.add_argument("--calendar", help="書き込み先のカレンダー ID（設定を上書き）")
     sync.add_argument("--no-label", action="store_true", help="処理済みラベルを付けない")
 
+    parse = subparsers.add_parser(
+        "parse",
+        help="JSON で渡したメールから提出依頼を抽出する（Google 認証は不要）",
+        description="メールの配列を JSON で受け取り、締め切りとカレンダー予定の内容を JSON で返します。"
+        " Claude の Gmail 連携など、別の経路で取得したメールを処理するために使います。",
+    )
+    _add_common_arguments(parse)
+    parse.add_argument("input", nargs="?", help="入力 JSON ファイル（省略時は標準入力）")
+    parse.add_argument("--format", choices=("json", "text"), default="json", help="出力形式")
+    parse.add_argument(
+        "--extractor", choices=("rules", "llm", "auto"), help="抽出方法（設定を上書き）"
+    )
+
+    query = subparsers.add_parser(
+        "query", help="設定から組み立てた Gmail の検索クエリを表示する"
+    )
+    _add_common_arguments(query)
+
     init = subparsers.add_parser("init-config", help="設定ファイルのひな形を書き出す")
     init.add_argument("path", nargs="?", default="config.yaml", help="書き出し先（既定: config.yaml）")
     init.add_argument("-f", "--force", action="store_true", help="既存ファイルを上書きする")
@@ -88,6 +117,9 @@ def _load_config(args: argparse.Namespace) -> Config:
         config.gmail.query = f"newer_than:{args.since}d {config.gmail.query}".strip()
     if getattr(args, "extractor", None):
         config.extractor = args.extractor
+    if source := getattr(args, "source", None):
+        config.gmail.enabled = source in ("gmail", "all")
+        config.imap.enabled = source in ("imap", "all")
     if getattr(args, "calendar", None):
         config.calendar.calendar_id = args.calendar
     if getattr(args, "no_label", False):
@@ -96,24 +128,73 @@ def _load_config(args: argparse.Namespace) -> Config:
     return config
 
 
-def _connect(config: Config):
-    """認証して (gmail, calendar) のサービスを返す。"""
+def _connect(config: Config, *, need_calendar: bool):
+    """必要なぶんだけ Google に接続し、(gmail, calendar) を返す。
+
+    IMAP だけを使う構成では Gmail の権限を要求しない。
+    """
+    need_gmail = config.gmail.enabled
+    if not need_gmail and not need_calendar:
+        return None, None
     creds = get_credentials(
         config.credentials_path,
         config.token_path,
-        scopes_for(need_label=bool(config.gmail.label_processed)),
+        scopes_for(
+            need_gmail=need_gmail,
+            need_calendar=need_calendar,
+            need_label=bool(config.gmail.label_processed),
+        ),
     )
-    return build_services(creds)
+    return build_services(creds, gmail=need_gmail, calendar=need_calendar)
+
+
+def _imap_password(config: Config) -> str:
+    password = os.environ.get(config.imap.password_env, "")
+    if password:
+        return password
+    if sys.stdin.isatty():
+        return getpass.getpass(f"{config.imap.username} のパスワード: ")
+    raise RuntimeError(
+        f"IMAP のパスワードが設定されていません。環境変数 {config.imap.password_env} に入れてください。"
+    )
+
+
+def _build_imap_source(config: Config) -> ImapSource:
+    imap = config.imap
+    return ImapSource(
+        imap.host,
+        imap.username,
+        _imap_password(config),
+        port=imap.port,
+        mailbox=imap.mailbox,
+        use_ssl=imap.use_ssl,
+        timezone_name=config.timezone,
+    )
 
 
 def _fetch_messages(config: Config, gmail_service):
-    source = GmailSource(gmail_service, config.timezone)
-    query = build_query(config.gmail.query, config.gmail.add_keyword_filter)
-    print(f"Gmail を検索中 (最大 {config.gmail.max_results} 件)")
-    print(f"  クエリ: {query}")
-    messages = source.search(query, config.gmail.max_results)
-    print(f"  {len(messages)} 件のメールを取得しました\n")
-    return source, messages
+    """有効になっている取り込み元からメールを集める。"""
+    gmail_source = None
+    messages: list = []
+
+    if config.gmail.enabled:
+        gmail_source = GmailSource(gmail_service, config.timezone)
+        query = build_query(config.gmail.query, config.gmail.add_keyword_filter)
+        print(f"Gmail を検索中 (最大 {config.gmail.max_results} 件)")
+        print(f"  クエリ: {query}")
+        found = gmail_source.search(query, config.gmail.max_results)
+        print(f"  {len(found)} 件を取得しました")
+        messages.extend(found)
+
+    if config.imap.enabled:
+        print(f"IMAP を検索中: {config.imap.username}@{config.imap.host} "
+              f"({config.imap.mailbox} / 直近 {config.imap.days} 日)")
+        found = _build_imap_source(config).search(config.imap.days, config.imap.max_results)
+        print(f"  {len(found)} 件を取得しました")
+        messages.extend(found)
+
+    print()
+    return gmail_source, messages
 
 
 def _describe(submission: Submission) -> str:
@@ -143,7 +224,10 @@ def command_auth(args: argparse.Namespace) -> int:
     creds = get_credentials(
         config.credentials_path,
         config.token_path,
-        scopes_for(need_label=bool(config.gmail.label_processed)),
+        scopes_for(
+            need_gmail=config.gmail.enabled,
+            need_label=bool(config.gmail.label_processed),
+        ),
     )
     print(f"認証が完了しました。トークン: {config.token_path}")
     return 0 if creds else 1
@@ -151,7 +235,7 @@ def command_auth(args: argparse.Namespace) -> int:
 
 def command_scan(args: argparse.Namespace) -> int:
     config = _load_config(args)
-    gmail_service, _ = _connect(config)
+    gmail_service, _ = _connect(config, need_calendar=False)
     _, messages = _fetch_messages(config, gmail_service)
 
     extractor = build_extractor(config)
@@ -178,14 +262,14 @@ def command_scan(args: argparse.Namespace) -> int:
 
 def command_sync(args: argparse.Namespace) -> int:
     config = _load_config(args)
-    gmail_service, calendar_service = _connect(config)
+    gmail_service, calendar_service = _connect(config, need_calendar=True)
     source, messages = _fetch_messages(config, gmail_service)
 
     extractor = build_extractor(config)
     syncer = CalendarSync(calendar_service, config)
     state = State(config.state_path)
     label_id = ""
-    if config.gmail.label_processed and not args.dry_run:
+    if source is not None and config.gmail.label_processed and not args.dry_run:
         label_id = source.ensure_label(config.gmail.label_processed)
 
     results: list[SyncResult] = []
@@ -214,7 +298,7 @@ def command_sync(args: argparse.Namespace) -> int:
                 fingerprint=result.fingerprint,
                 title=submission.title,
             )
-            if label_id:
+            if label_id and message.source == "gmail":
                 try:
                     source.add_label(message.id, label_id)
                 except Exception as exc:  # ラベル付けの失敗で処理を止めない
@@ -238,6 +322,71 @@ def command_sync(args: argparse.Namespace) -> int:
     return 1 if counts["failed"] else 0
 
 
+def command_parse(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    raw = Path(args.input).expanduser().read_text(encoding="utf-8") if args.input else sys.stdin.read()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"入力を JSON として読めません: {exc}", file=sys.stderr)
+        return 2
+
+    entries = data.get("messages", []) if isinstance(data, dict) else data
+    if not isinstance(entries, list):
+        print("入力はメールの配列、または {\"messages\": [...]} である必要があります", file=sys.stderr)
+        return 2
+
+    tz = ZoneInfo(config.timezone)
+    extractor = build_extractor(config)
+    submissions, needs_review = [], []
+    for entry in entries:
+        message = message_from_dict(entry, tz)
+        submission = extractor.extract(message)
+        if submission is None:
+            continue
+        target = submissions if submission.has_deadline else needs_review
+        target.append(submission_to_dict(submission, config))
+
+    submissions.sort(key=lambda item: (item["due_date"], item["due_time"] or "23:59"))
+
+    if args.format == "text":
+        for item in submissions:
+            due = item["due_date"] + (f" {item['due_time']}" if item["due_time"] else "")
+            print(f"  提出  {item['title']}\n          締切: {due}")
+        for item in needs_review:
+            print(f"  要確認  {item['title']}")
+        print(f"\n{len(entries)} 件中 {len(submissions)} 件に締切あり / "
+              f"{len(needs_review)} 件は要確認")
+        return 0
+
+    json.dump(
+        {
+            "timezone": config.timezone,
+            "extractor": config.extractor,
+            "counts": {
+                "total": len(entries),
+                "submissions": len(submissions),
+                "needs_review": len(needs_review),
+                "ignored": len(entries) - len(submissions) - len(needs_review),
+            },
+            "submissions": submissions,
+            "needs_review": needs_review,
+        },
+        sys.stdout,
+        ensure_ascii=False,
+        indent=2,
+    )
+    print()
+    return 0
+
+
+def command_query(args: argparse.Namespace) -> int:
+    """メールを別経路で取得する場合に、同じ条件で検索できるようにする。"""
+    config = _load_config(args)
+    print(build_query(config.gmail.query, config.gmail.add_keyword_filter))
+    return 0
+
+
 def command_init_config(args: argparse.Namespace) -> int:
     path = Path(args.path).expanduser()
     if path.exists() and not args.force:
@@ -253,6 +402,8 @@ _COMMANDS = {
     "auth": command_auth,
     "scan": command_scan,
     "sync": command_sync,
+    "parse": command_parse,
+    "query": command_query,
     "init-config": command_init_config,
 }
 
