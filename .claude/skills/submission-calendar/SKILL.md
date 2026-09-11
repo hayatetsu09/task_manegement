@@ -16,12 +16,13 @@ description: メール（Gmail / Outlook）に届いた提出依頼を見つけ�
 
 ### 1. 検索条件を確認する
 
+リポジトリ直下で実行する（パッケージは `src/` にあるので `PYTHONPATH=src` が要る）。
+
 ```bash
-python3 -m submission_calendar query          # リポジトリ直下で実行
+cd <このリポジトリ> && PYTHONPATH=src python3 -m submission_calendar query
 ```
 
-出力された Gmail 検索クエリをそのまま次の手順で使う。
-（`PYTHONPATH=src` が必要な場合は `PYTHONPATH=src python3 -m submission_calendar query`）
+出力された Gmail 検索クエリを、そのまま次の手順で使う。
 
 ### 2. メールを集める
 
@@ -57,8 +58,11 @@ python3 -m submission_calendar query          # リポジトリ直下で実行
 ### 4. 締め切りを抽出する
 
 ```bash
-python3 -m submission_calendar parse /tmp/subcal/mails.json > /tmp/subcal/result.json
+PYTHONPATH=src python3 -m submission_calendar parse /tmp/subcal/mails.json > /tmp/subcal/result.json
 ```
+
+`ModuleNotFoundError` になる場合はリポジトリ直下にいるか確認する。
+PyYAML が無くても動く（設定ファイルを使わない場合）。
 
 `result.json` の中身:
 
