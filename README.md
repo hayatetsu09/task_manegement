@@ -61,9 +61,13 @@ Google Cloud の設定は要りません。claude.ai で次のコネクタを繋
 `.claude/skills/submission-calendar/SKILL.md` の手順に沿って、メールの収集 → 締め切りの抽出 →
 重複確認 → カレンダー登録 → 今日明日の提出物の報告までを行います。
 
-**毎朝自動で動かす場合**は Claude に頼んで Routine を作ってもらってください
-（「毎朝7時に提出物をチェックして」など）。毎朝そのとき新しく届いた提出依頼だけが登録され、
-締め切りが近いものが報告されます。
+**毎朝自動で動かす場合**は、claude.ai の Routines（定期実行）に登録します。
+手順と貼り付け用のプロンプトは
+[`.claude/skills/submission-calendar/routine.md`](.claude/skills/submission-calendar/routine.md)
+にあります。毎朝そのとき新しく届いた提出依頼だけが登録され、締め切りが近いものが通知されます。
+
+> Routine を作るときは **Gmail と Google カレンダーのコネクタを必ず紐づけてください**。
+> コネクタが無い Routine はメールもカレンダーも触れません。
 
 ---
 
@@ -280,5 +284,6 @@ src/submission_calendar/
     └── llm.py        Claude API による抽出（任意）
 
 .claude/skills/submission-calendar/
-└── SKILL.md          Claude 連携で使う手順書
+├── SKILL.md          Claude 連携で使う手順書
+└── routine.md        毎朝の自動実行（Routine）の設定手順
 ```
