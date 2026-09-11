@@ -6,6 +6,7 @@ Google API を直接叩かない経路（Claude の Gmail / Google カレンダ�
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from zoneinfo import ZoneInfo
@@ -15,6 +16,9 @@ from .config import Config
 from .models import Message, Submission
 
 __all__ = ["message_from_dict", "submission_to_dict", "parse_datetime"]
+
+# Message-ID は <...> 付きで渡されることがある。目印に使うので外しておく
+_ANGLE_BRACKETS = re.compile(r"^<|>$")
 
 
 def parse_datetime(value, tz: ZoneInfo) -> datetime:
@@ -44,7 +48,9 @@ def message_from_dict(data: dict, tz: ZoneInfo) -> Message:
 
     キー名は取り込み元によって揺れるので、よくある別名も受け付ける。
     """
-    message_id = str(data.get("id") or data.get("messageId") or data.get("message_id") or "")
+    message_id = _ANGLE_BRACKETS.sub(
+        "", str(data.get("id") or data.get("messageId") or data.get("message_id") or "").strip()
+    )
     if not message_id:
         raise ValueError("メールに id がありません")
     received = data.get("received_at") or data.get("receivedAt") or data.get("date")

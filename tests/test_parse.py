@@ -157,3 +157,12 @@ def test_imap_messages_get_an_imap_source_id():
     result = submission_to_dict(submission, Config())
     assert result["source_id"] == "imap:x@y"
     assert result["marker"] == "subcal:imap:x@y"
+
+
+def test_angle_brackets_are_stripped_from_message_ids():
+    """Outlook の Message-ID は <...> 付きで渡されることがある。"""
+    message = message_from_dict(
+        {"id": "<CAB1@example.ac.jp>", "subject": "件名", "received_at": "2026-09-11T09:00:00+09:00"},
+        TOKYO,
+    )
+    assert message.id == "CAB1@example.ac.jp"
