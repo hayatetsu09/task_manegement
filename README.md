@@ -163,12 +163,9 @@ graph:
 
 ### 定期実行について
 
-Outlook を含めて自動化する場合は、**ローカルの cron で `subcal sync` を回す**形になります。
+Outlook を含めて自動化する場合は、**手元のパソコンで `subcal sync` を定期実行する**形になります。
 Claude 連携（A）はクラウド側で動くため、大学メールのトークンを持てません。
-
-```cron
-0 7 * * * cd ~/task_manegement && .venv/bin/subcal sync --source gmail,outlook >> ~/.local/state/subcal.log 2>&1
-```
+設定方法は下の「[毎日自動で実行する](#毎日自動で実行する)」を参照してください。
 
 締め切りの通知は Google カレンダー側のリマインダー（既定で前日と 3 時間前）が出してくれます。
 
@@ -209,11 +206,33 @@ calendar:
   calendar_id: "xxxxxxxx@group.calendar.google.com"
 ```
 
-### 定期実行（ローカル CLI の場合）
+### 毎日自動で実行する
+
+**macOS** — 付属のスクリプトで設定します。
+
+```bash
+./scripts/install-macos-schedule.sh          # 毎朝 7:00
+./scripts/install-macos-schedule.sh 21:30    # 時刻を変える
+./scripts/install-macos-schedule.sh --uninstall
+```
+
+cron ではなく launchd を使っています。**ノートパソコンは実行時刻にスリープしていることが多く、
+cron だとその日の実行が飛ばされてしまう**ためです。launchd なら次に開いたときに実行されます。
+
+| やりたいこと | コマンド |
+| --- | --- |
+| すぐに 1 回試す | `launchctl kickstart -k gui/$(id -u)/com.submission-calendar.daily` |
+| ログを見る | `tail -f ~/.local/state/subcal.log` |
+| 取り込み元を変える | `SUBCAL_SOURCES=gmail ./scripts/install-macos-schedule.sh` |
+
+**Linux** — cron に登録します。`crontab -e` で開いたファイルに次の 1 行を書きます
+（ターミナルにそのまま打つのではありません）。
 
 ```cron
-0 7 * * * cd ~/task_manegement && .venv/bin/subcal sync --source gmail,outlook >> ~/.local/state/subcal.log 2>&1
+0 7 * * * cd $HOME/task_manegement && .venv/bin/subcal sync --source gmail,outlook >> $HOME/.local/state/subcal.log 2>&1
 ```
+
+事前に `mkdir -p ~/.local/state` でログの置き場所を作っておいてください。
 
 同じメールから予定が二重に作られることはないので、何度実行しても問題ありません。
 
