@@ -10,7 +10,7 @@ $ subcal sync
 Gmail を検索中 (最大 50 件)
   クエリ: newer_than:60d -category:promotions -category:social (提出 OR 課題 OR ...)
   34 件を取得しました
-IMAP を検索中: s2412345@example.ac.jp@outlook.office365.com (INBOX / 直近 60 日)
+Outlook を検索中 (inbox / 直近 60 日)
   41 件を取得しました
 
 + 作成    【情報処理演習】第3回レポート提出のお願い
@@ -30,9 +30,9 @@ IMAP を検索中: s2412345@example.ac.jp@outlook.office365.com (INBOX / 直近 
 
 | | A. Claude 連携（設定が楽） | B. ローカル CLI（自分の環境で完結） |
 | --- | --- | --- |
-| 準備 | claude.ai のコネクタを繋ぐだけ | Google Cloud で OAuth 設定、IMAP のパスワード |
+| 準備 | claude.ai のコネクタを繋ぐだけ | Google Cloud で OAuth 設定 |
 | Gmail | ✅ Gmail コネクタ | ✅ Gmail API |
-| Outlook / 大学メール | ✅ [Gmail に集約](#大学メールoutlookを取り込む)すれば対応 | ✅ IMAP で直接 |
+| Outlook / 大学メール | ❌ 読めません | ✅ Microsoft Graph（OAuth） |
 | カレンダー登録 | ✅ Google カレンダーコネクタ | ✅ Calendar API |
 | 定期実行 | Claude の Routine（毎朝など） | cron / タスクスケジューラ |
 | 費用 | Claude のトークンを消費 | 無料（Google の API に課金はありません） |
@@ -51,7 +51,8 @@ Google Cloud の設定は要りません。claude.ai で次のコネクタを繋
 - **Gmail** — 提出依頼メールを読む
 - **Google カレンダー** — 予定を登録する
 
-大学メール（Outlook）は、[Gmail に集約](#大学メールoutlookを取り込む)しておけば同じ経路で拾えます。
+**大学メール（Outlook）はこの経路では読めません。**
+大学の Microsoft 365 を対象にする場合は下の「B. ローカル CLI」を使ってください。
 
 このリポジトリを Claude に読み込ませた状態で、こう頼むだけです。
 
@@ -105,68 +106,8 @@ subcal auth      # ブラウザが開くので許可する（初回のみ）
 
 ### 3. 大学メール（Outlook / Microsoft 365）を追加する
 
-ローカル CLI なら IMAP で直接読めます。`config.yaml` に次を書きます。
-
-```yaml
-imap:
-  enabled: true
-  host: outlook.office365.com      # 大学独自のサーバなら imap.example.ac.jp など
-  username: s2412345@example.ac.jp
-  mailbox: INBOX
-  days: 60
-```
-
-パスワードは設定ファイルに書かず、環境変数から読ませます。
-
-```bash
-export SUBCAL_IMAP_PASSWORD='...'
-subcal sync --source all          # Gmail と大学メールの両方
-subcal sync --source imap         # 大学メールだけ（Gmail の権限は要求しません）
-```
-
-**うまく繋がらない場合**
-
-- Microsoft 365 で多要素認証を使っていると、通常のパスワードでは IMAP にログインできません。
-  Microsoft アカウントの設定で**アプリパスワード**を発行し、それを使ってください。
-- 大学の管理者が IMAP を無効にしていることがあります。その場合は次の
-  「[大学メールを取り込む](#大学メールoutlookを取り込む)」を使ってください。
-- ホスト名・ポートは大学の「メール設定」案内ページに載っています（多くは 993 / SSL）。
-
----
-
-## 大学メール（Outlook）を取り込む
-
-Claude 連携で大学メールも扱うには、**大学メールを Gmail 側に集約**します。
-一度設定すれば、以降は Gmail の経路だけで大学メールも自動的に対象になります。
-
-### 方法1: Gmail から取りに行く（おすすめ）
-
-大学が自動転送を禁止していても使えます。Gmail が POP で大学メールを定期的に取得します。
-
-1. Gmail の **設定 → アカウントとインポート → 「他のアカウントのメールを確認」** →「メールアカウントを追加する」
-2. 大学のメールアドレスを入力し、POP サーバの情報を入れる
-   （Microsoft 365 なら `outlook.office365.com` / ポート 995 / SSL）
-3. 「受信したメッセージにラベルを付ける」で `大学` などのラベルを付ける
-
-多要素認証を使っている場合は、ここでもアプリパスワードが必要です。
-
-### 方法2: Outlook から転送する
-
-1. Outlook Web の **設定 → メール → ルール** で新しいルールを作る
-2. 条件を「件名に次の語を含む」にして `提出`／`課題`／`レポート`／`締切`／`期限` を指定
-   （全部転送してもよいですが、絞った方が Gmail 側が静かです）
-3. アクションを「転送先」にして Gmail のアドレスを指定
-
-### 取り込んだら
-
-Gmail 側でラベルが付くので、検索条件をそのラベルに絞ると精度が上がります。
-
-```yaml
-gmail:
-  query: "newer_than:60d (label:大学 OR from:ac.jp)"
-detection:
-  only_senders: ["ac.jp"]      # 大学からのメールだけを対象にする
-```
+下の「[大学メール（Outlook / Microsoft 365）を取り込む](#大学メールoutlook--microsoft-365-を取り込む)」を
+参照してください。ひとことで言うと `subcal auth-outlook` でブラウザからサインインするだけです。
 
 ### 4. 動作確認
 
@@ -176,6 +117,61 @@ subcal sync       # カレンダーに反映する
 ```
 
 ---
+
+## 大学メール（Outlook / Microsoft 365）を取り込む
+
+大学が Microsoft 365 を使っている場合、**Microsoft Graph（OAuth）経由**で読みます。
+
+```bash
+subcal auth-outlook                  # ブラウザが開くのでコードを入れてサインイン（初回のみ）
+subcal scan --source outlook         # 読めているか確認
+subcal sync --source gmail,outlook   # Gmail と大学メールの両方を登録
+```
+
+設定に書いておけば毎回 `--source` を付けなくて済みます。
+
+```yaml
+graph:
+  enabled: true
+  tenant: organizations   # 大学のテナント ID が分かれば入れておくと確実
+  days: 60
+```
+
+- **パスワードは保存しません。** 保存されるのは更新トークンだけで、
+  `~/.config/submission-calendar/outlook-token.json` に権限 600 で置かれます
+- 要求する権限は**メールの読み取り（Mail.Read）だけ**です。送信も削除もできません
+- Azure へのアプリ登録は不要です（Microsoft が公開しているクライアント ID を使います）
+
+### 使えない方法（試す前に読んでください）
+
+大学の Microsoft 365 では、次の 2 つは**仕組み上できません**。
+
+| 方法 | 結果 | 理由 |
+| --- | --- | --- |
+| Outlook のルールで Gmail に転送 | ❌ | 多くの大学が外部転送を管理者設定で禁止しています。試すと `550 5.7.520 Access denied, Your organization does not allow external forwarding.` が返ります。ルールの書き方を変えても通りません |
+| Gmail の「他のアカウントのメールを確認」（POP 取得） | ❌ | Microsoft が 2022 年 10 月に Exchange Online の POP / IMAP 向け**パスワード認証を廃止**しました。正しいサーバ名とパスワードでも「ユーザー名かパスワードが違います」になります |
+
+同じ理由で、`imap:` の設定も **Microsoft 365 には使えません**。大学が独自の IMAP サーバ
+（`imap.example.ac.jp` のようなもの）を運用している場合にだけ使えます。
+
+### サインインが拒否される場合
+
+`AADSTS` で始まるエラーが出たときは、大学のテナントが既定のクライアント ID を許可していません。
+
+1. 大学の情報基盤センターに「Microsoft Graph でメールを読み取りたい」と相談する
+2. 自分で Azure にアプリ登録できる場合は、その ID を `graph.client_id` に書く
+
+### 定期実行について
+
+Outlook を含めて自動化する場合は、**ローカルの cron で `subcal sync` を回す**形になります。
+Claude 連携（A）はクラウド側で動くため、大学メールのトークンを持てません。
+
+```cron
+0 7 * * * cd ~/task_manegement && .venv/bin/subcal sync --source gmail,outlook >> ~/.local/state/subcal.log 2>&1
+```
+
+締め切りの通知は Google カレンダー側のリマインダー（既定で前日と 3 時間前）が出してくれます。
+
 
 ## コマンド
 
@@ -187,12 +183,13 @@ subcal sync       # カレンダーに反映する
 | `subcal parse mails.json` | JSON で渡したメールから締め切りを抽出する（Google 認証不要） |
 | `subcal query` | 設定から組み立てた Gmail 検索クエリを表示する |
 | `subcal auth` | Google の認証を行う |
+| `subcal auth-outlook` | Outlook / Microsoft 365 にサインインする |
 | `subcal init-config` | 設定ファイルのひな形を書き出す |
 
 よく使うオプション:
 
 ```bash
-subcal sync --source all                  # Gmail + 大学メール
+subcal sync --source gmail,outlook        # Gmail + 大学メール
 subcal sync --since 14                    # 直近 14 日のメールだけ
 subcal sync -q "label:大学 newer_than:30d"  # Gmail の検索クエリを指定
 subcal sync -n 200                        # 調べるメールを 200 件まで増やす
@@ -215,7 +212,7 @@ calendar:
 ### 定期実行（ローカル CLI の場合）
 
 ```cron
-0 8,20 * * * cd ~/task_manegement && .venv/bin/subcal sync >> ~/.local/state/subcal.log 2>&1
+0 7 * * * cd ~/task_manegement && .venv/bin/subcal sync --source gmail,outlook >> ~/.local/state/subcal.log 2>&1
 ```
 
 同じメールから予定が二重に作られることはないので、何度実行しても問題ありません。
@@ -236,8 +233,11 @@ subcal init-config           # config.yaml を書き出す
 | `gmail.enabled` | `true` | Gmail から取り込むか |
 | `gmail.query` | `newer_than:60d …` | 対象にするメールの検索条件。`label:大学` などで絞ると精度が上がる |
 | `gmail.label_processed` | （なし） | 処理済みメールに付ける Gmail ラベル名 |
-| `imap.enabled` | `false` | Outlook / 大学メールから取り込むか |
-| `imap.host` / `imap.username` | Outlook | 接続先とアカウント |
+| `graph.enabled` | `false` | Outlook / Microsoft 365 から取り込むか |
+| `graph.tenant` | `organizations` | 大学のテナント ID を入れると確実 |
+| `graph.client_id` | Microsoft 公開の ID | 自分で Azure にアプリ登録した場合に変更する |
+| `imap.enabled` | `false` | 独自 IMAP サーバから取り込むか（Microsoft 365 では使えません） |
+| `imap.host` / `imap.username` | — | 接続先とアカウント |
 | `imap.password_env` | `SUBCAL_IMAP_PASSWORD` | パスワードを読む環境変数名 |
 | `calendar.calendar_id` | `primary` | 書き込み先のカレンダー |
 | `calendar.event_prefix` | `[提出] ` | 予定のタイトルの先頭に付ける文字 |
@@ -292,7 +292,9 @@ subcal sync --extractor auto
 | 締め切りの日付がずれる | 予定の説明にある「メール中の締め切り表記」を確認。独特な書き方なら `--extractor auto` を試す |
 | `アクセスをブロック` と表示される | OAuth 同意画面のテストユーザーに自分のアドレスを追加する |
 | 権限が足りないと言われる | `gmail.label_processed` の設定や取り込み元を変えると必要な権限が変わるため `subcal auth` をやり直す |
-| IMAP にログインできない | アプリパスワードを使う／大学が IMAP を許可しているか確認する |
+| Outlook のサインインが `AADSTS...` で失敗する | 大学のテナントが既定のクライアント ID を許可していません。「サインインが拒否される場合」を参照 |
+| Outlook のメールが 0 件になる | `graph.days` を増やす。`graph.folder` を `inbox` 以外にしている場合は名前を確認する |
+| IMAP にログインできない | Microsoft 365 相手には使えません（パスワード認証は廃止済み）。`--source outlook` を使ってください |
 | 予定を消したのにまた作られない | 処理済みの記録が残っているため。`subcal sync --all` で作り直す |
 
 ## 開発
@@ -317,7 +319,8 @@ src/submission_calendar/
 ├── calendar_sync.py  Google カレンダーへの反映（重複防止つき）
 ├── sources/
 │   ├── gmail.py      Gmail からの取り込み
-│   └── imap.py       IMAP（Outlook / 大学メール）からの取り込み
+│   ├── graph.py      Microsoft Graph（Outlook / Microsoft 365）からの取り込み
+│   └── imap.py       IMAP（独自メールサーバ）からの取り込み
 └── extract/
     ├── rules.py      キーワードと正規表現による抽出（既定）
     └── llm.py        Claude API による抽出（任意）
