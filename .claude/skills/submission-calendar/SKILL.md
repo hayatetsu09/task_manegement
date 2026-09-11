@@ -29,10 +29,10 @@ cd <このリポジトリ> && PYTHONPATH=src python3 -m submission_calendar quer
 **Gmail** — `search_threads` に手順 1 のクエリを渡す（`pageSize` は 30 程度）。
 ヒットしたスレッドは `get_thread` に `messageFormat: "PLAIN_TEXT"` を指定して本文を取る。
 
-**Outlook / 大学メール** — 大学メールは Gmail 側に集約して取り込む運用（README の
-「大学メールを取り込む」を参照）なので、上の Gmail の検索で一緒に拾える。
-Microsoft 365 など別のメールコネクタが使える場合は、同じ趣旨のキーワード
-（提出 / 課題 / レポート / 締切 / 期限 / 必着 など）でそちらも検索する。
+**Outlook / 大学メール** — この経路（Claude のコネクタ）では読めない。
+Microsoft 365 のメールはローカルで `subcal sync --source outlook` を実行する運用なので、
+ここでは Gmail だけを扱う。ユーザーが大学メールについて尋ねた場合は
+README の「大学メール（Outlook / Microsoft 365）を取り込む」を案内する。
 
 ### 3. JSON にまとめる
 

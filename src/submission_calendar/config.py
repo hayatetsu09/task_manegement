@@ -17,7 +17,7 @@ except ImportError:  # YAML 設定を使わない場合は無くても動く
     yaml = None
 
 __all__ = ["Config", "ConfigError", "DEFAULT_CONFIG_PATHS", "GmailConfig", "ImapConfig",
-           "CalendarConfig", "DetectionConfig", "LLMConfig", "EXAMPLE_CONFIG"]
+           "GraphConfig", "CalendarConfig", "DetectionConfig", "LLMConfig", "EXAMPLE_CONFIG"]
 
 DEFAULT_CONFIG_PATHS = (
     Path("config.yaml"),
@@ -81,6 +81,26 @@ class ImapConfig:
 
 
 @dataclass
+class GraphConfig:
+    """Microsoft Graph（Outlook / Microsoft 365）から取り込む設定。
+
+    Microsoft は POP / IMAP のパスワード認証を廃止したため、大学の Microsoft 365
+    メールはこちら（OAuth）を使う。`subcal auth-outlook` で一度サインインする。
+    """
+
+    enabled: bool = False
+    # Microsoft が公開しているパブリッククライアント（Microsoft Graph Command Line Tools）。
+    # 自分で Azure にアプリ登録した場合はその ID に置き換える。
+    client_id: str = "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+    # 大学のテナント ID を入れると確実。organizations は職場・学校アカウント全般
+    tenant: str = "organizations"
+    folder: str = "inbox"
+    days: int = 60
+    max_results: int = 50
+    token_file: str = "~/.config/submission-calendar/outlook-token.json"
+
+
+@dataclass
 class CalendarConfig:
     calendar_id: str = "primary"
     event_prefix: str = "[提出] "
@@ -130,6 +150,7 @@ class Config:
     state_file: str = "~/.config/submission-calendar/state.json"
     gmail: GmailConfig = field(default_factory=GmailConfig)
     imap: ImapConfig = field(default_factory=ImapConfig)
+    graph: GraphConfig = field(default_factory=GraphConfig)
     calendar: CalendarConfig = field(default_factory=CalendarConfig)
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
@@ -146,6 +167,10 @@ class Config:
     @property
     def state_path(self) -> Path:
         return Path(self.state_file).expanduser()
+
+    @property
+    def graph_token_path(self) -> Path:
+        return Path(self.graph.token_file).expanduser()
 
     # --- 読み込み -----------------------------------------------------
     @classmethod
@@ -191,8 +216,10 @@ class Config:
         if self.imap.enabled and not (self.imap.host and self.imap.username):
             raise ConfigError("imap を使うには imap.host と imap.username が必要です")
 
-        if not self.gmail.enabled and not self.imap.enabled:
-            raise ConfigError("取り込み元がありません（gmail.enabled か imap.enabled を true に）")
+        if not (self.gmail.enabled or self.imap.enabled or self.graph.enabled):
+            raise ConfigError(
+                "取り込み元がありません（gmail / imap / graph のいずれかを enabled: true に）"
+            )
 
 
 def _read_yaml(path: Path) -> dict[str, Any]:
@@ -263,7 +290,21 @@ gmail:
   # 処理済みメールに付けるラベル（空なら付けない。gmail.modify 権限が必要）
   label_processed: ""
 
-# Outlook / Microsoft 365 や大学のメールサーバから IMAP で取り込む場合
+# Outlook / Microsoft 365 から取り込む場合（推奨）
+# Microsoft は POP / IMAP のパスワード認証を廃止したため、大学のメールはこちらを使う。
+# 初回だけ `subcal auth-outlook` でブラウザからサインインする（パスワードは保存しない）。
+graph:
+  enabled: false
+  # 自分で Azure にアプリ登録した場合はその ID を入れる
+  client_id: "14d82eec-204b-4c2f-b7e8-296a70dab67e"
+  # 大学のテナント ID を入れると確実。organizations は職場・学校アカウント全般
+  tenant: organizations
+  folder: inbox
+  days: 60
+  max_results: 50
+  token_file: ~/.config/submission-calendar/outlook-token.json
+
+# 大学が独自の IMAP サーバを運用している場合（Microsoft 365 では使えません）
 imap:
   enabled: false
   host: outlook.office365.com   # 大学のサーバなら imap.example.ac.jp など

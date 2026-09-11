@@ -156,3 +156,29 @@ class FakeImapSource:
             )
             for index, (subject, body) in enumerate(self.mails[:max_results])
         ]
+
+
+class FakeGraphSource:
+    """GraphSource の search() だけを真似たもの。"""
+
+    def __init__(self, mails: list[tuple[str, str]], received: datetime | None = None):
+        self.mails = mails
+        self.received = received or datetime(2026, 9, 11, 9, 0)
+        self.calls: list[tuple[int, int]] = []
+
+    def search(self, days: int = 60, max_results: int = 50):
+        from submission_calendar.models import Message
+
+        self.calls.append((days, max_results))
+        return [
+            Message(
+                id=f"outlook-{index}@mail.kyutech.jp",
+                subject=subject,
+                sender="教務課 <kyomu@mail.kyutech.jp>",
+                received_at=self.received,
+                body=body,
+                source="outlook",
+                url=f"https://outlook.office365.com/mail/inbox/id/{index}",
+            )
+            for index, (subject, body) in enumerate(self.mails[:max_results])
+        ]

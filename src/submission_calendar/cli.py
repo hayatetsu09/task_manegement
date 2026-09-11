@@ -26,6 +26,7 @@ from .google_auth import build_services, get_credentials, scopes_for
 from .models import Submission
 from .serialize import message_from_dict, submission_to_dict
 from .sources.gmail import GmailSource, build_query
+from .sources.graph import GraphAuth, GraphSource
 from .sources.imap import ImapSource
 from .state import State
 
@@ -54,8 +55,8 @@ def _add_search_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--source",
-        choices=("gmail", "imap", "all"),
-        help="取り込み元（gmail / imap=Outlook など / all）",
+        help="取り込み元。gmail / outlook / imap をカンマ区切りで指定。"
+        "all は設定ファイルの指定をそのまま使う",
     )
 
 
@@ -95,6 +96,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--extractor", choices=("rules", "llm", "auto"), help="抽出方法（設定を上書き）"
     )
 
+    auth_outlook = subparsers.add_parser(
+        "auth-outlook",
+        help="Outlook / Microsoft 365 にサインインする（ブラウザ、初回のみ）",
+        description="デバイスコード認証でサインインします。パスワードは保存されません。",
+    )
+    _add_common_arguments(auth_outlook)
+
     query = subparsers.add_parser(
         "query", help="設定から組み立てた Gmail の検索クエリを表示する"
     )
@@ -118,8 +126,17 @@ def _load_config(args: argparse.Namespace) -> Config:
     if getattr(args, "extractor", None):
         config.extractor = args.extractor
     if source := getattr(args, "source", None):
-        config.gmail.enabled = source in ("gmail", "all")
-        config.imap.enabled = source in ("imap", "all")
+        if source != "all":  # all は設定ファイルの指定をそのまま使う
+            names = {name.strip().lower() for name in source.split(",") if name.strip()}
+            unknown = names - {"gmail", "imap", "outlook"}
+            if unknown:
+                raise ConfigError(
+                    f"--source に使えない値があります: {', '.join(sorted(unknown))}"
+                    "（gmail / imap / outlook / all）"
+                )
+            config.gmail.enabled = "gmail" in names
+            config.imap.enabled = "imap" in names
+            config.graph.enabled = "outlook" in names
     if getattr(args, "calendar", None):
         config.calendar.calendar_id = args.calendar
     if getattr(args, "no_label", False):
@@ -159,6 +176,11 @@ def _imap_password(config: Config) -> str:
     )
 
 
+def _build_graph_source(config: Config) -> GraphSource:
+    auth = GraphAuth(config.graph_token_path, config.graph.client_id, config.graph.tenant)
+    return GraphSource(auth, config.timezone, config.graph.folder)
+
+
 def _build_imap_source(config: Config) -> ImapSource:
     imap = config.imap
     return ImapSource(
@@ -183,6 +205,12 @@ def _fetch_messages(config: Config, gmail_service):
         print(f"Gmail を検索中 (最大 {config.gmail.max_results} 件)")
         print(f"  クエリ: {query}")
         found = gmail_source.search(query, config.gmail.max_results)
+        print(f"  {len(found)} 件を取得しました")
+        messages.extend(found)
+
+    if config.graph.enabled:
+        print(f"Outlook を検索中 ({config.graph.folder} / 直近 {config.graph.days} 日)")
+        found = _build_graph_source(config).search(config.graph.days, config.graph.max_results)
         print(f"  {len(found)} 件を取得しました")
         messages.extend(found)
 
@@ -231,6 +259,15 @@ def command_auth(args: argparse.Namespace) -> int:
     )
     print(f"認証が完了しました。トークン: {config.token_path}")
     return 0 if creds else 1
+
+
+def command_auth_outlook(args: argparse.Namespace) -> int:
+    config = _load_config(args)
+    auth = GraphAuth(config.graph_token_path, config.graph.client_id, config.graph.tenant)
+    auth.login()
+    print(f"\nサインインが完了しました。トークン: {config.graph_token_path}")
+    print("設定ファイルの graph.enabled を true にするか、--source outlook を付けて実行してください。")
+    return 0
 
 
 def command_scan(args: argparse.Namespace) -> int:
@@ -400,6 +437,7 @@ def command_init_config(args: argparse.Namespace) -> int:
 
 _COMMANDS = {
     "auth": command_auth,
+    "auth-outlook": command_auth_outlook,
     "scan": command_scan,
     "sync": command_sync,
     "parse": command_parse,
@@ -421,7 +459,7 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("\n中断しました", file=sys.stderr)
         return 130
-    except (FileNotFoundError, RuntimeError) as exc:
+    except (FileNotFoundError, RuntimeError) as exc:  # GraphError も RuntimeError
         print(f"エラー: {exc}", file=sys.stderr)
         return 1
 

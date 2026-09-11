@@ -3,7 +3,8 @@
 from datetime import datetime
 
 import pytest
-from fakes import FakeCalendarService, FakeGmailService, FakeImapSource, raw_message
+from fakes import (FakeCalendarService, FakeGmailService, FakeGraphSource,
+                   FakeImapSource, raw_message)
 
 from submission_calendar import cli
 
@@ -204,3 +205,65 @@ def test_imap_messages_are_not_labelled(imap_env):
     cli.main(["sync", "--source", "all", *imap_env["imap_args"]])
     labelled = [message_id for message_id, _ in imap_env["gmail"].messages().modified]
     assert all(not message_id.startswith("imap") for message_id in labelled)
+
+
+# --- Outlook（Microsoft Graph）経由 --------------------------------------
+@pytest.fixture
+def outlook_env(env, monkeypatch, tmp_path):
+    graph_source = FakeGraphSource(
+        [
+            ("【教務課】履修登録確認票の提出について",
+             "確認票は10月5日(月) 17:00までに教務課へ提出してください。"),
+            ("学内ネットワーク停止のお知らせ", "10月1日に停止します。"),
+        ]
+    )
+    monkeypatch.setattr(cli, "_build_graph_source", lambda config: graph_source)
+    config_path = tmp_path / "outlook.yaml"
+    config_path.write_text(
+        f"state_file: {tmp_path / 'outlook-state.json'}\ngraph:\n  enabled: true\n",
+        encoding="utf-8",
+    )
+    env["outlook_args"] = ["-c", str(config_path)]
+    env["graph_source"] = graph_source
+    return env
+
+
+def test_outlook_mail_is_registered(outlook_env):
+    assert cli.main(["sync", *outlook_env["outlook_args"]]) == 0
+    summaries = [event["summary"] for event in events(outlook_env).store.values()]
+    assert "[提出] 【教務課】履修登録確認票の提出について" in summaries
+
+
+def test_outlook_event_links_back_to_outlook(outlook_env):
+    cli.main(["sync", "--source", "outlook", *outlook_env["outlook_args"]])
+    event = next(iter(events(outlook_env).store.values()))
+    assert "outlook.office365.com" in event["description"]
+
+
+def test_source_outlook_skips_gmail(outlook_env, monkeypatch):
+    captured = {}
+
+    def fake_connect(config, *, need_calendar):
+        captured["gmail"] = config.gmail.enabled
+        captured["graph"] = config.graph.enabled
+        return None, outlook_env["calendar"]
+
+    monkeypatch.setattr(cli, "_connect", fake_connect)
+    assert cli.main(["sync", "--source", "outlook", *outlook_env["outlook_args"]]) == 0
+    assert captured == {"gmail": False, "graph": True}
+
+
+def test_source_accepts_a_comma_separated_list(outlook_env):
+    assert cli.main(["sync", "--source", "gmail,outlook", *outlook_env["outlook_args"]]) == 0
+    assert len(events(outlook_env).store) == 2  # Gmail から 1 件、Outlook から 1 件
+
+
+def test_unknown_source_is_rejected(env, capsys):
+    assert cli.main(["sync", "--source", "yahoo", *env["args"]]) == 2
+    assert "--source に使えない値" in capsys.readouterr().err
+
+
+def test_source_all_keeps_the_config(outlook_env):
+    """all は設定ファイルの指定をそのまま使う。"""
+    assert cli.main(["sync", "--source", "all", *outlook_env["outlook_args"]]) == 0
+    assert len(events(outlook_env).store) == 2
