@@ -129,3 +129,47 @@ def test_low_confidence_deadline_is_flagged(extractor):
     )
     assert result is not None
     assert any("確認" in note for note in result.notes)
+
+
+# --- 差出人の許可リスト -------------------------------------------------
+def test_only_senders_keeps_matching_mail():
+    extractor = RuleExtractor(DetectionConfig(only_senders=["ac.jp"]))
+    result = extractor.extract(
+        message("レポート提出のお願い", "提出期限は9/20です。", sender="prof@example.ac.jp")
+    )
+    assert result is not None
+
+
+def test_only_senders_drops_everything_else():
+    """「応募締切」のある宣伝メールを差出人で落とせる。"""
+    extractor = RuleExtractor(DetectionConfig(only_senders=["ac.jp"]))
+    assert extractor.extract(
+        message("【8/30締切】試写会のご案内", "応募締切は8月30日までです。", sender="info@shop.example.com")
+    ) is None
+
+
+def test_only_senders_matches_a_bare_domain_or_address():
+    extractor = RuleExtractor(DetectionConfig(only_senders=["kyomu@example.ac.jp"]))
+    assert extractor.extract(
+        message("課題提出", "9/20までに提出。", sender="教務課 <kyomu@example.ac.jp>")
+    ) is not None
+    assert extractor.extract(
+        message("課題提出", "9/20までに提出。", sender="other@example.ac.jp")
+    ) is None
+
+
+def test_empty_only_senders_allows_everything():
+    extractor = RuleExtractor(DetectionConfig(only_senders=[]))
+    assert extractor.extract(
+        message("レポート提出のお願い", "提出期限は9/20です。", sender="anyone@example.com")
+    ) is not None
+
+
+@pytest.mark.parametrize("subject", [
+    "【無料ご招待】試写会のお知らせ",
+    "【抽選で当たる】プレゼントキャンペーン",
+    "今だけ特価クーポン配布中",
+])
+def test_promotional_subjects_are_excluded(extractor, subject):
+    """応募締切のある宣伝メールは既定の除外語で落ちる。"""
+    assert extractor.extract(message(subject, "応募締切は8月30日までです。")) is None

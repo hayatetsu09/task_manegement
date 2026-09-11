@@ -34,6 +34,14 @@ DEFAULT_EXCLUDE_KEYWORDS = [
     "広告",
     "newsletter",
     "unsubscribe",
+    # 「応募締切」のある宣伝メールは提出依頼と紛らわしいので落とす
+    "ご招待",
+    "抽選",
+    "クーポン",
+    "特価",
+    "割引",
+    "試写会",
+    "プレゼント",
 ]
 
 
@@ -96,6 +104,9 @@ class DetectionConfig:
     # 件名・差出人にこれらが含まれていたら対象外にする
     exclude_keywords: list[str] = field(default_factory=lambda: list(DEFAULT_EXCLUDE_KEYWORDS))
     exclude_senders: list[str] = field(default_factory=list)
+    # 指定すると、この差出人（部分一致）からのメールだけを対象にする。
+    # 例: ["ac.jp"] のように大学のドメインを入れると、宣伝メールがまとめて外れる
+    only_senders: list[str] = field(default_factory=list)
     # 受信日より何日以上前の日付を締め切り候補から外すか
     ignore_past_days: int = 1
 
@@ -284,6 +295,9 @@ calendar:
 detection:
   # 提出依頼と判定するスコアのしきい値（件名に出てきた語は 2 倍で数えます）
   min_score: 3.0
+  # 最も効く設定。ここに大学のドメインなどを入れると、宣伝メールがまとめて外れます
+  #   only_senders: ["ac.jp", "kyutech"]
+  only_senders: []
   # 自分の用途に合わせて足したいキーワード
   extra_keywords: []
   # 件名・差出人にこれらが含まれていたら対象外にする
@@ -295,6 +309,13 @@ detection:
     - 広告
     - newsletter
     - unsubscribe
+    - ご招待
+    - 抽選
+    - クーポン
+    - 特価
+    - 割引
+    - 試写会
+    - プレゼント
   exclude_senders: []
   # 受信日より何日以上前の日付を締め切り候補から外すか
   ignore_past_days: 1

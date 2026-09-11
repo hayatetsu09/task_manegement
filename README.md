@@ -32,7 +32,7 @@ IMAP を検索中: s2412345@example.ac.jp@outlook.office365.com (INBOX / 直近 
 | --- | --- | --- |
 | 準備 | claude.ai のコネクタを繋ぐだけ | Google Cloud で OAuth 設定、IMAP のパスワード |
 | Gmail | ✅ Gmail コネクタ | ✅ Gmail API |
-| Outlook / 大学メール | ✅ Microsoft 365 コネクタ | ✅ IMAP |
+| Outlook / 大学メール | ✅ [Gmail に集約](#大学メールoutlookを取り込む)すれば対応 | ✅ IMAP で直接 |
 | カレンダー登録 | ✅ Google カレンダーコネクタ | ✅ Calendar API |
 | 定期実行 | Claude の Routine（毎朝など） | cron / タスクスケジューラ |
 | 費用 | Claude のトークンを消費 | 無料（Google の API に課金はありません） |
@@ -50,7 +50,8 @@ Google Cloud の設定は要りません。claude.ai で次のコネクタを繋
 
 - **Gmail** — 提出依頼メールを読む
 - **Google カレンダー** — 予定を登録する
-- **Microsoft 365**（任意）— Outlook / 大学メールも読みたい場合
+
+大学メール（Outlook）は、[Gmail に集約](#大学メールoutlookを取り込む)しておけば同じ経路で拾えます。
 
 このリポジトリを Claude に読み込ませた状態で、こう頼むだけです。
 
@@ -104,7 +105,7 @@ subcal auth      # ブラウザが開くので許可する（初回のみ）
 
 ### 3. 大学メール（Outlook / Microsoft 365）を追加する
 
-大学のメールは IMAP で取り込みます。`config.yaml` に次を書きます。
+ローカル CLI なら IMAP で直接読めます。`config.yaml` に次を書きます。
 
 ```yaml
 imap:
@@ -127,9 +128,45 @@ subcal sync --source imap         # 大学メールだけ（Gmail の権限は�
 
 - Microsoft 365 で多要素認証を使っていると、通常のパスワードでは IMAP にログインできません。
   Microsoft アカウントの設定で**アプリパスワード**を発行し、それを使ってください。
-- 大学の管理者が IMAP を無効にしていることがあります。その場合は、
-  Outlook 側のルールで大学メールを Gmail に**転送**し、Gmail 経由で取り込むのが手軽です。
+- 大学の管理者が IMAP を無効にしていることがあります。その場合は次の
+  「[大学メールを取り込む](#大学メールoutlookを取り込む)」を使ってください。
 - ホスト名・ポートは大学の「メール設定」案内ページに載っています（多くは 993 / SSL）。
+
+---
+
+## 大学メール（Outlook）を取り込む
+
+Claude 連携で大学メールも扱うには、**大学メールを Gmail 側に集約**します。
+一度設定すれば、以降は Gmail の経路だけで大学メールも自動的に対象になります。
+
+### 方法1: Gmail から取りに行く（おすすめ）
+
+大学が自動転送を禁止していても使えます。Gmail が POP で大学メールを定期的に取得します。
+
+1. Gmail の **設定 → アカウントとインポート → 「他のアカウントのメールを確認」** →「メールアカウントを追加する」
+2. 大学のメールアドレスを入力し、POP サーバの情報を入れる
+   （Microsoft 365 なら `outlook.office365.com` / ポート 995 / SSL）
+3. 「受信したメッセージにラベルを付ける」で `大学` などのラベルを付ける
+
+多要素認証を使っている場合は、ここでもアプリパスワードが必要です。
+
+### 方法2: Outlook から転送する
+
+1. Outlook Web の **設定 → メール → ルール** で新しいルールを作る
+2. 条件を「件名に次の語を含む」にして `提出`／`課題`／`レポート`／`締切`／`期限` を指定
+   （全部転送してもよいですが、絞った方が Gmail 側が静かです）
+3. アクションを「転送先」にして Gmail のアドレスを指定
+
+### 取り込んだら
+
+Gmail 側でラベルが付くので、検索条件をそのラベルに絞ると精度が上がります。
+
+```yaml
+gmail:
+  query: "newer_than:60d (label:大学 OR from:ac.jp)"
+detection:
+  only_senders: ["ac.jp"]      # 大学からのメールだけを対象にする
+```
 
 ### 4. 動作確認
 
@@ -207,6 +244,7 @@ subcal init-config           # config.yaml を書き出す
 | `calendar.default_due_time` | `23:59` | 時刻が書かれていなかったときに使う締め切り時刻 |
 | `calendar.all_day_when_time_unknown` | `false` | `true` にすると時刻不明のものを終日予定にする |
 | `calendar.reminders_minutes` | `[1440, 180]` | 通知するタイミング（分前）。1440 = 前日 |
+| `detection.only_senders` | `[]` | **誤検出に最も効く。** 大学のドメインなどを入れると、宣伝メールがまとめて外れる |
 | `detection.min_score` | `3.0` | 提出依頼と判定するしきい値。下げると拾いやすく、上げると誤検出が減る |
 | `detection.extra_keywords` | `[]` | 「実習日誌」など自分の用途に合わせた語を足せる |
 | `detection.exclude_keywords` | 広告系の語 | 件名・差出人にあれば対象外にする語 |
@@ -249,7 +287,8 @@ subcal sync --extractor auto
 | 症状 | 対処 |
 | --- | --- |
 | 提出依頼なのに拾われない | `subcal scan -v` でスコアを確認し、`detection.min_score` を下げるか `detection.extra_keywords` に語を足す |
-| 関係ないメールが拾われる | `detection.min_score` を上げる、`detection.exclude_keywords` / `exclude_senders` に足す、`gmail.query` を `label:` などで絞る |
+| 関係ないメールが拾われる | **`detection.only_senders` に大学のドメインを入れるのが一番効きます。** 他に `detection.min_score` を上げる、`exclude_keywords` に足す、`gmail.query` を `label:` で絞る |
+| 「応募締切」のある宣伝メールが登録される | 上と同じ。既定でも `ご招待` `抽選` `クーポン` などは除外していますが、差出人で絞るのが確実です |
 | 締め切りの日付がずれる | 予定の説明にある「メール中の締め切り表記」を確認。独特な書き方なら `--extractor auto` を試す |
 | `アクセスをブロック` と表示される | OAuth 同意画面のテストユーザーに自分のアドレスを追加する |
 | 権限が足りないと言われる | `gmail.label_processed` の設定や取り込み元を変えると必要な権限が変わるため `subcal auth` をやり直す |

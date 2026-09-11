@@ -77,13 +77,19 @@ class RuleExtractor:
     # --- 判定 ---------------------------------------------------------
     def is_excluded(self, message: Message) -> str | None:
         """除外理由を返す（除外しないなら None）。件名と差出人だけを見る。"""
+        sender = message.sender.lower()
+        if self.detection.only_senders:
+            allowed = [name.lower() for name in self.detection.only_senders if name]
+            if not any(name in sender for name in allowed):
+                return "許可した差出人からのメールではありません"
+
         haystack = f"{message.subject}\n{message.sender}".lower()
         for word in self.detection.exclude_keywords:
             if word and word.lower() in haystack:
                 return f"除外キーワード「{word}」"
-        for sender in self.detection.exclude_senders:
-            if sender and sender.lower() in message.sender.lower():
-                return f"除外差出人「{sender}」"
+        for excluded in self.detection.exclude_senders:
+            if excluded and excluded.lower() in sender:
+                return f"除外差出人「{excluded}」"
         return None
 
     def score(self, message: Message) -> tuple[float, list[str]]:

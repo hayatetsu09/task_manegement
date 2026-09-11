@@ -11,7 +11,7 @@
 | --- | --- |
 | 名前 | 毎朝の提出物チェック |
 | スケジュール | 毎日 7:00（日本時間） |
-| コネクタ | **Gmail** と **Google カレンダー**（大学メールも読むなら **Microsoft 365** も） |
+| コネクタ | **Gmail** と **Google カレンダー** |
 | リポジトリ | `hayatetsu09/task_manegement` |
 | 通知 | プッシュ通知をオン |
 
@@ -32,8 +32,7 @@
 
 1. Gmail から提出依頼らしいメールを集める。検索クエリはリポジトリ直下で
    `PYTHONPATH=src python3 -m submission_calendar query` を実行して取得する。
-   Microsoft 365 コネクタが使える場合は Outlook（大学メール）も同じ趣旨のキーワードで検索する。
-   使えない場合は Gmail だけで続け、報告にその旨を 1 行書く。
+   大学メールを Gmail に集約している場合は、この検索で一緒に拾える。
 2. 集めたメールを JSON にまとめ、`PYTHONPATH=src python3 -m submission_calendar parse` で
    締め切りを抽出する。締め切りが読み取れなかったもの（needs_review）は、自分で本文を読んで
    判断する。根拠がないものは日付を作らず「要確認」に回す。
